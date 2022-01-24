@@ -6,10 +6,12 @@ library(tidyverse)
 library(rworldmap)
 library(RColorBrewer)
 
-fn <- "hotel_bookings.csv"  # source: https://www.kaggle.com/jessemostipak/hotel-booking-demand
 
 MAP_HEIGHT = 720
 
+theme_set(theme_bw())
+
+# !TODO skip unused cols col_skip()
 colTypes = cols(
   hotel=col_factor(),
   is_canceled=col_logical(),
@@ -45,9 +47,35 @@ colTypes = cols(
   reservation_status_date=col_date(format="%Y-%m-%d")
 )
 
+fn <- "hotel_bookings.csv"  # source: https://www.kaggle.com/jessemostipak/hotel-booking-demand
 df_booking <- read_csv(fn, col_types = colTypes)
+euCountries <- c("Austria","Belgium","Bulgaria","Croatia","Cyprus",
+                 "Czech Rep.","Denmark","Estonia","Finland","France",
+                 "Germany","Greece","Hungary","Ireland","Italy","Latvia",
+                 "Lithuania","Luxembourg","Malta","Netherlands","Poland",
+                 "Portugal","Romania","Slovakia","Slovenia","Spain",
+                 "Sweden","United Kingdom","Norway","Switzerland","Ukraine",
+                 "Belarus","Serbia","Bosnia and Herz.","Macedonia","Albania",
+                 "Montenegro","Moldavia")
+euCC <- c("ALB","AUT","BEL","BGR","BIH","BLR","CHE","CYP","CZE","DEU","DNK",
+          "ESP","EST","FIN","FRA","GBR","GRC","HRV","HUN","IRL","ITA","LTU",
+          "LUX","LVA","MKD","MNE","NLD","NOR","POL","PRT","ROU","SRB","SVK",
+          "SVN","SWE","UKR","MLT")
+monthMapping <- c(
+  "styczeń"="January",
+  "luty"="February",
+  "marzec"="March",
+  "kwiecień"="April",
+  "maj"="May",
+  "czerwiec"="June",
+  "lipiec"="July",
+  "sierpień"="August",
+  "wrzesień"="September",
+  "październik"="October",
+  "listopad"="November",
+  "grudzień"="December"
+)
 
-theme_set(theme_bw())
 
 # Define UI for app that draws a histogram ----
 ui <- fluidPage(
@@ -58,25 +86,49 @@ ui <- fluidPage(
   # Sidebar layout with input and output definitions ----
   sidebarLayout(
     
-    # Sidebar panel for inputs ----
     sidebarPanel(
+      checkboxInput(
+        inputId="isCanceledCheck",
+        label="Nie uwzględniaj rezerwacji które zostały wycofane"
+      ),
       
-      # Input: Slider for the number of bins ----
-      sliderInput(inputId = "bins",
-                  label = "Number of bins:",
-                  min = 1,
-                  max = 50,
-                  value = 30)
-      
+      checkboxInput(
+        inputId="percentValues",
+        label="Przeskaluj względem maksymalnej wartości"
+      ),
+
+      sliderInput(
+        inputId = "mapMaxValue",
+        label = "Dostosuj nacycenie mapy",
+        min = 1000,
+        max = 10000,
+        step = 1000,
+        value = 7000
+      ),
+
+      selectInput(
+        inputId = "roomRequested",
+        label = "Rodzaj żądanego pokoju",
+        choices = c("dowolny", "A", "B", "C", "D", "E", "F", "G", "H", "L", "H")
+      ),
+
+      selectInput(
+        inputId = "monthRequested",
+        label = "Miesiąc",
+        choices = c("cały rok", "styczeń", "luty", "marzec", "kwiecień", "maj",
+                    "czerwiec", "lipiec", "sierpień", "wrzesień", "październik",
+                    "listopad", "grudzień")
+      )
+
     ),
-    
+
     # Main panel for displaying outputs ----
     mainPanel(
       
       # Output: Histogram ----
       #plotOutput(outputId = "distPlot")
-      plotOutput(outputId = "mapPlot")
-      
+      plotOutput(outputId = "mapPlot", height = MAP_HEIGHT),
+      dataTableOutput(outputId = "tablePlot")
     )
   )
 )
@@ -84,16 +136,37 @@ ui <- fluidPage(
 server <- function(input, output) {
   
   output$mapPlot <- renderPlot({
-    # count(df_booking, country) -> visit_per_country
+    df_filtered <- df_booking
+
+    # filter data based on user input
+    if (input$isCanceledCheck){
+      df_filtered %>%
+        filter(!is_canceled) -> df_filtered
+    }
+
+    roomRequestedType <- input$roomRequested
+    if(roomRequestedType != "dowolny"){
+      df_filtered %>%
+        filter(reserved_room_type == roomRequestedType) -> df_filtered
+    }
+
+    monthRequested <- input$monthRequested
+    if(monthRequested != "cały rok"){
+      df_filtered %>%
+        filter(arrival_date_month == monthMapping[monthRequested]) -> df_filtered
+    }
+
+    breaks_seq <- seq(0, input$mapMaxValue, by=1000)
+    count(df_filtered, country) -> visit_per_country
+    legendTitle <- "Liczba wizyt"
+    if (input$percentValues){
+      visit_per_country %>%
+        mutate(n=100*n/sum(visit_per_country$n)) -> visit_per_country
+      breaks_seq <- seq(0, 100, by=20)
+      legendTitle <- "Procent\nwszystkich\nwizyt"
+    }
+
     worldMap <- getMap()
-    euCountries <- c("Austria","Belgium","Bulgaria","Croatia","Cyprus",
-                       "Czech Rep.","Denmark","Estonia","Finland","France",
-                       "Germany","Greece","Hungary","Ireland","Italy","Latvia",
-                       "Lithuania","Luxembourg","Malta","Netherlands","Poland",
-                       "Portugal","Romania","Slovakia","Slovenia","Spain",
-                       "Sweden","United Kingdom","Norway","Switzerland","Ukraine",
-                       "Belarus","Serbia","Bosnia and Herz.","Macedonia","Albania",
-                       "Montenegro","Moldavia")
     indEU <- which(worldMap$NAME%in%euCountries)
     europeCoords <- lapply(indEU, function(i){
       df <- data.frame(worldMap@polygons[[i]]@Polygons[[1]]@coords)
@@ -103,18 +176,17 @@ server <- function(input, output) {
       return(df)
     })
     europeCoords <- do.call("rbind", europeCoords)
-    joinedEU <- left_join(x=europeCoords, y=count(df_booking, country), by="country")
-
+    joinedEU <- left_join(x=europeCoords, y=visit_per_country, by="country")
+    joinedEU$n <- replace_na(joinedEU$n, 0)
+    print(unique(joinedEU$country))
     # Plot the map
-    breaks_seq <- seq(0, 8000, by=1000)
     ggplot() + geom_polygon(data = joinedEU, aes(x = long, y = lat, group = region, fill = n),
                             colour = "black", size = 0.1) +
       coord_map(xlim = c(-13, 35),  ylim = c(32, 71)) +
-      scale_fill_gradient(name = "Liczba wizyt", low = "#FF0000FF", high = "#FFFF00FF", na.value = "#FFFF00FF",
+      scale_fill_gradient(name = legendTitle, low = "#FF0000FF", high = "#FFFF00FF", na.value = "#FFFF00FF",
                           breaks=breaks_seq, limits=c(0, breaks_seq[length(breaks_seq)]), labels=format(breaks_seq)) +
       theme(
-        #panel.grid.minor = element_line(colour = NA), panel.grid.minor = element_line(colour = NA),
-        #panel.background = element_rect(fill = NA, colour = NA),
+        #panel.grid.minor = element_line(colour = NA),
         axis.text.x = element_blank(),
         axis.text.y = element_blank(), axis.ticks.x = element_blank(),
         axis.ticks.y = element_blank(), axis.title = element_blank(),
@@ -123,6 +195,34 @@ server <- function(input, output) {
         legend.key.size = unit(1, 'cm'),
         text = element_text(size=20))
   }, height = MAP_HEIGHT)
+
+  output$tablePlot <- renderDataTable({
+    df_filtered <- df_booking
+    df_filtered %>%
+      filter(country %in% euCC) -> df_filtered
+
+    # filter data based on user input
+    if (input$isCanceledCheck){
+      df_filtered %>%
+        filter(!is_canceled) -> df_filtered
+    }
+
+    roomRequestedType <- input$roomRequested
+    if(roomRequestedType != "dowolny"){
+      df_filtered %>%
+        filter(reserved_room_type == roomRequestedType) -> df_filtered
+    }
+
+    monthRequested <- input$monthRequested
+    if(monthRequested != "cały rok"){
+      df_filtered %>%
+        filter(arrival_date_month == monthMapping[monthRequested]) -> df_filtered
+    }
+
+    breaks_seq <- seq(0, input$mapMaxValue, by=1000)
+    df_filtered %>% count(country) %>% arrange(desc(n)) -> visit_per_country
+    visit_per_country
+  }, options = list(pageLength=10))
   
 }
 
