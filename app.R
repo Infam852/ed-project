@@ -76,11 +76,13 @@ monthMapping <- c(
   "listopad"="November",
   "grudzień"="December"
 )
-
+smp_size_reduce <- floor(0.2 * nrow(df_booking))
+reduced_idx <- sample(seq_len(nrow(df_booking)), size = smp_size_reduce)
+df_reduced <- df_booking[reduced_idx, ]
 
 # Define UI for app that draws a histogram ----
 ui <- fluidPage(
-  titlePanel("Eksploracja danych - projekt wizualizacji danych"),
+  titlePanel("Eksploracja danych - wizualizacja danych"),
   tabsetPanel(
     tabPanel(
       "Mapa", 
@@ -131,12 +133,111 @@ ui <- fluidPage(
         )
       )
     ),
-    tabPanel("Wykresy", fluid = TRUE,
+    tabPanel("Lasy losowe", fluid = TRUE,
        sidebarLayout(
          sidebarPanel(
+           checkboxInput(
+             inputId="random_seed",
+             label="Losowe ziarno",
+             value=T
+           ),
+           br(),
+           strong("Zaznacz cechy których chcesz użyć do trenowania"),
+           checkboxInput(
+             inputId="deposit_type",
+             label="deposit_type",
+             value=T
+           ),
+           checkboxInput(
+             inputId="lead_time",
+             label="lead_time",
+             value=T
+           ),
+           checkboxInput(
+             inputId="country",
+             label="country",
+             value=T
+           ),
+           checkboxInput(
+             inputId="adr",
+             label="adr",
+             value=T
+           ),
+           checkboxInput(
+             inputId="agent",
+             label="agent",
+             value=T
+           ),
+           checkboxInput(
+             inputId="stays_in_weekend_nights",
+             label="stays_in_weekend_nights",
+             value=T
+           ),
+           checkboxInput(
+             inputId="adults",
+             label="adults",
+             value=T
+           ),
+           checkboxInput(
+             inputId="children",
+             label="children",
+             value=T
+           ),
+           checkboxInput(
+             inputId="babies",
+             label="babies",
+             value=T
+           ),
+           checkboxInput(
+             inputId="market_segment",
+             label="market_segment",
+             value=T
+           ),
+           checkboxInput(
+             inputId="distribution_channel",
+             label="distribution_channel",
+             value=T
+           ),
+           checkboxInput(
+             inputId="is_repeated_guest",
+             label="is_repeated_guest",
+             value=T
+           ),
+           checkboxInput(
+             inputId="previous_cancellations",
+             label="previous_cancellations",
+             value=T
+           ),
+           checkboxInput(
+             inputId="booking_changes",
+             label="booking_changes",
+             value=T
+           ),
+           checkboxInput(
+             inputId="hotel",
+             label="hotel",
+             value=T
+           ),
+           checkboxInput(
+             inputId="customer_type",
+             label="customer_type",
+             value=T
+           ),
+           checkboxInput(
+             inputId="required_car_parking_spaces",
+             label="required_car_parking_spaces",
+             value=T
+           ),
+           checkboxInput(
+             inputId="total_of_special_requests",
+             label="total_of_special_requests",
+             value=T
+           ),
+           
            actionButton("run", "Trenuj!")),
          mainPanel(
-           plotOutput(outputId = "rfPlot"),
+           plotOutput(outputId = "rfPlot", height = MAP_HEIGHT),
+           dataTableOutput(outputId = "rfResults")
          )
        )
     )
@@ -182,7 +283,7 @@ server <- function(input, output) {
       df_filtered %>%
         group_by(country) %>%
         summarize(n=mean(adr, na.rm=T)) -> visit_per_country
-      visit_per_country$n[visit_per_country$n < 60] <- 60
+      visit_per_country$n[visit_per_country$n < 60] <- 61
       breaks_seq <- seq(60, input$mapMaxValue, by=10)
     } else {
       count(df_filtered, country) -> visit_per_country
@@ -195,7 +296,7 @@ server <- function(input, output) {
       breaks_seq <- seq(0, 100, by=20)
       legendTitle <- "Procent"
     }
-
+    
     worldMap <- getMap()
     indEU <- which(worldMap$NAME%in%euCountries)
     europeCoords <- lapply(indEU, function(i){
@@ -208,6 +309,7 @@ server <- function(input, output) {
     europeCoords <- do.call("rbind", europeCoords)
     joinedEU <- left_join(x=europeCoords, y=visit_per_country, by="country")
     joinedEU$n <- replace_na(joinedEU$n, 0)
+
     # Plot the map
     ggplot() + geom_polygon(data = joinedEU, aes(x = long, y = lat, group = region, fill = n),
                             colour = "black", size = 0.1) +
@@ -262,56 +364,136 @@ server <- function(input, output) {
       arrange(desc(n)) %>%
       mutate(Kraj=country) %>%
       mutate("Wartość"=n) %>%
-      mutate(Procent=round(100*n/sum(visit_per_country$n), 2)) %>%
-      select(-n, -country) -> visit_per_country
-    visit_per_country
+      mutate(Procent=round(100*n/sum(df_summarized$n), 2)) %>%
+      select(-n, -country) -> df_summarized
+    df_summarized
   }, options = list(pageLength=10))
 
+  observeEvent(
+    input$run, {
+      output$rfPlot <- renderPlot({
+        SPLIT_RATIO <- 0.8
+        if (input$random_seed){
+          set.seed(sample.int(10000, 1))
+        } else{
+          set.seed(1234)
+        }
+        # drop always
+        df_reduced %>% select(-reservation_status_date,
+                              -reservation_status,
+                              -arrival_date_year,
+                              -arrival_date_month,
+                              -arrival_date_week_number,
+                              -arrival_date_day_of_month) -> df_filtered
+        
+        # filter by user input
+        if(!input$deposit_type){
+          df_filtered %>% select(-deposit_type) -> df_filtered
+        }
+        if(!input$lead_time){
+          df_filtered %>% select(-lead_time) -> df_filtered
+        }
+        if(!input$country){
+          df_filtered %>% select(-country) -> df_filtered
+        }
+        if(!input$adr){
+          df_filtered %>% select(-adr) -> df_filtered
+        }
+        if(!input$agent){
+          df_filtered %>% select(-agent) -> df_filtered
+        }
+        if(!input$stays_in_weekend_nights){
+          df_filtered %>% select(-stays_in_weekend_nights) -> df_filtered
+        }
+        if(!input$adults){
+          df_filtered %>% select(-adults) -> df_filtered
+        }
+        if(!input$children){
+          df_filtered %>% select(-children) -> df_filtered
+        }
+        if(!input$babies){
+          df_filtered %>% select(-babies) -> df_filtered
+        }
+        if(!input$market_segment){
+          df_filtered %>% select(-market_segment) -> df_filtered
+        }
+        if(!input$distribution_channel){
+          df_filtered %>% select(-distribution_channel) -> df_filtered
+        }
+        if(!input$is_repeated_guest){
+          df_filtered %>% select(-is_repeated_guest) -> df_filtered
+        }
+        if(!input$previous_cancellations){
+          df_filtered %>% select(-previous_cancellations) -> df_filtered
+        }
+        if(!input$booking_changes){
+          df_filtered %>% select(-booking_changes) -> df_filtered
+        }
+        if(!input$hotel){
+          df_filtered %>% select(-hotel) -> df_filtered
+        }
+        if(!input$customer_type){
+          df_filtered %>% select(-customer_type) -> df_filtered
+        }
+        if(!input$required_car_parking_spaces){
+          df_filtered %>% select(-required_car_parking_spaces) -> df_filtered
+        }
+        if(!input$total_of_special_requests){
+          df_filtered %>% select(-total_of_special_requests) -> df_filtered
+        }
+        df_filtered<-drop_na(df_filtered)
+        
+        # split data
+        smp_size <- floor(SPLIT_RATIO * nrow(df_filtered))
+        train_ind <- sample(seq_len(nrow(df_filtered)), size = smp_size)
+        train <- df_filtered[train_ind, ]
+        test <- df_filtered[-train_ind, ]
+
+        model_rf <- ranger(
+          is_canceled ~ .,
+          data = train,
+          importance='impurity')
+        df_filtered$is_canceled <- as.factor(df_filtered$is_canceled)
+        
+        pred_rf <- predict(model_rf, test)
+        test$pred <- pred_rf$predictions
+        
+        
+        df_importance <- data.frame(attributes(model_rf$variable.importance),
+                                    as.vector(model_rf$variable.importance))
+        colnames(df_importance) <- c("name", "importance")
+        df_importance$name <- factor(
+          df_importance$name,
+          levels = df_importance$name[order(df_importance$importance)])
+        
+        output$rfResults <- renderDataTable({
+          cm_rf <- table(test$is_canceled, pred_rf$predictions)
+          acc_rf <- sum(test$is_canceled == test$pred) / nrow(test)
+          prec_rf <- cm_rf[2, 2] / (cm_rf[2, 2] + cm_rf[2, 1])
+          recall_rf <- cm_rf[2, 2] / (cm_rf[2, 2] + cm_rf[1, 2])
+          cat("Accurracy: ", acc_rf)
+          result_df = data.frame(
+            "Dokładność"=acc_rf,
+            "Precyzja"=prec_rf,
+            "Czułość"=recall_rf
+          )
+          result_df
+        })
+
+        ggplot(df_importance, aes(x=name, y=importance, fill=importance)) + 
+          geom_bar(stat="identity") +
+          xlab("Cecha") +
+          ylab("Istnotność") +
+          coord_flip() +
+          theme(axis.text = element_text(size = 16),
+                axis.title = element_text(size = 18),
+                legend.key.height= unit(2, 'cm'),
+                legend.key.width= unit(1, 'cm'))
+      }, height = MAP_HEIGHT)
+    }
+  )
   # second tab
-  output$rfPlot <- renderPlot({
-    SPLIT_RATIO <- 0.8
-    set.seed(123)
-
-    df_booking %>% select(-reservation_status_date,
-                          -reservation_status,
-                          -arrival_date_year,
-                          -arrival_date_month,
-                          -arrival_date_week_number,
-                          -arrival_date_day_of_month) -> df_filtered
-    
-    df_filtered<-drop_na(df_filtered)
-
-    # split data
-    smp_size <- floor(SPLIT_RATIO * nrow(df_filtered))
-    train_ind <- sample(seq_len(nrow(df_filtered)), size = smp_size)
-    train <- df_filtered[train_ind, ]
-    test <- df_filtered[-train_ind, ]
-
-    observeEvent(input$run, {
-      model_rf <- ranger(
-        is_canceled ~ .,
-        data = train,
-        importance='impurity')
-      df_filtered$is_canceled <- as.factor(df_filtered$is_canceled)
-      
-      pred_rf <- predict(model_rf, test)
-      test$pred <- pred_rf$predictions
-      
-      cm_rf <- table(test$is_canceled, pred_rf$predictions)
-      
-      acc_rf <- sum(test$is_canceled == test$pred) / nrow(test)
-      cat("Accurracy: ", acc_rf)
-      df_importance <- data.frame(attributes(model_rf$variable.importance),
-                                  as.vector(model_rf$variable.importance))
-      colnames(df_importance) <- c("name", "importance")
-      df_importance$name <- factor(
-        df_importance$name,
-        levels = df_importance$name[order(df_importance$importance)])
-      ggplot(df_importance, aes(x=name, y=importance, fill=importance)) + 
-        geom_bar(stat="identity") +
-        coord_flip()
-    })
-  })
+  
 }
 
 shinyApp(ui = ui, server = server)
