@@ -50,23 +50,22 @@ colTypes = cols(
 worldMap <- getMap()
 fn <- "hotel_bookings.csv"  # source: https://www.kaggle.com/jessemostipak/hotel-booking-demand
 df_booking <- read_csv(fn, col_types = colTypes)
-euCountries <- c("Austria","Belgium","Bulgaria","Croatia","Cyprus",
+# zmieniłem tutaj i w euCC trochę kolejność nie wiem czy to jest problematyczne, jak coś to zmienię
+euCountries <- c("Albania", "Austria","Belgium","Bulgaria","Belarus","Croatia","Cyprus",
                  "Czech Rep.","Denmark","Estonia","Finland","France",
                  "Germany","Greece","Hungary","Ireland","Italy","Latvia",
                  "Lithuania","Luxembourg","Malta","Netherlands","Poland",
                  "Portugal","Romania","Slovakia","Slovenia","Spain",
                  "Sweden","United Kingdom","Norway","Switzerland","Ukraine",
-                 "Belarus","Serbia","Bosnia and Herz.","Macedonia","Albania",
+                 "Serbia","Bosnia and Herz.","Macedonia",
                  "Montenegro","Moldavia")
-euCC <- c("ALB","AUT","BEL","BGR","BIH","BLR","CHE","CYP","CZE","DEU","DNK",
-          "ESP","EST","FIN","FRA","GBR","GRC","HRV","HUN","IRL","ITA","LTU",
-          "LUX","LVA","MKD","MNE","NLD","NOR","POL","PRT","ROU","SRB","SVK",
-          "SVN","SWE","UKR","MLT")
+euCC <- c("ALB","AUT","BEL","BGR","BLR","HRV","CYP","CZE","DNK","EST",
+          "FIN","FRA","DEU", "GRC", "HUN","IRL","ITA","LVA","LTU","LUX","MAL",
+          "NLD","POL","PRT","ROU","SVK","SVN","ESP","SWE","GBR","NOR","CHF",
+          "UKR","SRB","BIH","MAC", "MTG", "MOL")
 
 # Dorzucenie pozostałych kraji do mapowania skrótów 
-countries <- c("Spain", "Sweden")
-acronyms <- c("ESP", "SWE")
-countriesMapping <- setNames(as.list(acronyms), countries)
+countriesMapping <- setNames(as.list(euCC), euCountries)
 
 monthMapping <- c(
   "styczeń"="January",
