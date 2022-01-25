@@ -5,6 +5,7 @@ library("rnaturalearthdata")
 library(tidyverse)
 library(rworldmap)
 library(RColorBrewer)
+library(ranger)
 
 
 MAP_HEIGHT = 720
@@ -79,59 +80,65 @@ monthMapping <- c(
 
 # Define UI for app that draws a histogram ----
 ui <- fluidPage(
-  
-  # App title ----
   titlePanel("Eksploracja danych - projekt wizualizacji danych"),
-  
-  # Sidebar layout with input and output definitions ----
-  sidebarLayout(
-
-    sidebarPanel(
-      selectInput(
-        inputId = "visulizationType",
-        label = "Wybierz co pokazać",
-        choices = c("Liczbę klientów", "Średni dochód")
-      ),
-
-      checkboxInput(
-        inputId="isCanceledCheck",
-        label="Nie uwzględniaj rezerwacji które zostały wycofane"
-      ),
-      
-      checkboxInput(
-        inputId="percentValues",
-        label="Przeskaluj względem maksymalnej wartości"
-      ),
-
-      sliderInput(
-        inputId = "mapMaxValue",
-        label = "Dostosuj nacycenie mapy",
-        min = 1000,
-        max = 10000,
-        step = 1000,
-        value = 7000
-      ),
-
-      selectInput(
-        inputId = "roomRequested",
-        label = "Rodzaj żądanego pokoju",
-        choices = c("dowolny", "A", "B", "C", "D", "E", "F", "G", "H", "L", "H")
-      ),
-
-      selectInput(
-        inputId = "monthRequested",
-        label = "Miesiąc",
-        choices = c("cały rok", "styczeń", "luty", "marzec", "kwiecień", "maj",
-                    "czerwiec", "lipiec", "sierpień", "wrzesień", "październik",
-                    "listopad", "grudzień")
+  tabsetPanel(
+    tabPanel(
+      "Mapa", 
+      sidebarLayout(
+        sidebarPanel(
+          selectInput(
+            inputId = "visulizationType",
+            label = "Wybierz co pokazać",
+            choices = c("Liczbę klientów", "Średni dochód")
+          ),
+          
+          checkboxInput(
+            inputId="isCanceledCheck",
+            label="Nie uwzględniaj rezerwacji które zostały wycofane"
+          ),
+          
+          checkboxInput(
+            inputId="percentValues",
+            label="Przeskaluj względem maksymalnej wartości"
+          ),
+          
+          sliderInput(
+            inputId = "mapMaxValue",
+            label = "Dostosuj nacycenie mapy",
+            min = 1000,
+            max = 10000,
+            step = 1000,
+            value = 7000
+          ),
+          
+          selectInput(
+            inputId = "roomRequested",
+            label = "Rodzaj żądanego pokoju",
+            choices = c("dowolny", "A", "B", "C", "D", "E", "F", "G", "H", "L", "H")
+          ),
+          
+          selectInput(
+            inputId = "monthRequested",
+            label = "Miesiąc",
+            choices = c("cały rok", "styczeń", "luty", "marzec", "kwiecień", "maj",
+                        "czerwiec", "lipiec", "sierpień", "wrzesień", "październik",
+                        "listopad", "grudzień")
+          )
+        ),
+        mainPanel(
+          plotOutput(outputId = "mapPlot", height = MAP_HEIGHT),
+          dataTableOutput(outputId = "tablePlot")
+        )
       )
-
     ),
-
-    # Main panel for displaying outputs ----
-    mainPanel(
-      plotOutput(outputId = "mapPlot", height = MAP_HEIGHT),
-      dataTableOutput(outputId = "tablePlot")
+    tabPanel("Wykresy", fluid = TRUE,
+       sidebarLayout(
+         sidebarPanel(
+           actionButton("run", "Trenuj!")),
+         mainPanel(
+           plotOutput(outputId = "rfPlot"),
+         )
+       )
     )
   )
 )
@@ -259,7 +266,52 @@ server <- function(input, output) {
       select(-n, -country) -> visit_per_country
     visit_per_country
   }, options = list(pageLength=10))
-  
+
+  # second tab
+  output$rfPlot <- renderPlot({
+    SPLIT_RATIO <- 0.8
+    set.seed(123)
+
+    df_booking %>% select(-reservation_status_date,
+                          -reservation_status,
+                          -arrival_date_year,
+                          -arrival_date_month,
+                          -arrival_date_week_number,
+                          -arrival_date_day_of_month) -> df_filtered
+    
+    df_filtered<-drop_na(df_filtered)
+
+    # split data
+    smp_size <- floor(SPLIT_RATIO * nrow(df_filtered))
+    train_ind <- sample(seq_len(nrow(df_filtered)), size = smp_size)
+    train <- df_filtered[train_ind, ]
+    test <- df_filtered[-train_ind, ]
+
+    observeEvent(input$run, {
+      model_rf <- ranger(
+        is_canceled ~ .,
+        data = train,
+        importance='impurity')
+      df_filtered$is_canceled <- as.factor(df_filtered$is_canceled)
+      
+      pred_rf <- predict(model_rf, test)
+      test$pred <- pred_rf$predictions
+      
+      cm_rf <- table(test$is_canceled, pred_rf$predictions)
+      
+      acc_rf <- sum(test$is_canceled == test$pred) / nrow(test)
+      cat("Accurracy: ", acc_rf)
+      df_importance <- data.frame(attributes(model_rf$variable.importance),
+                                  as.vector(model_rf$variable.importance))
+      colnames(df_importance) <- c("name", "importance")
+      df_importance$name <- factor(
+        df_importance$name,
+        levels = df_importance$name[order(df_importance$importance)])
+      ggplot(df_importance, aes(x=name, y=importance, fill=importance)) + 
+        geom_bar(stat="identity") +
+        coord_flip()
+    })
+  })
 }
 
 shinyApp(ui = ui, server = server)
