@@ -85,8 +85,14 @@ ui <- fluidPage(
   
   # Sidebar layout with input and output definitions ----
   sidebarLayout(
-    
+
     sidebarPanel(
+      selectInput(
+        inputId = "visulizationType",
+        label = "Wybierz co pokazać",
+        choices = c("Liczbę klientów", "Średni dochód")
+      ),
+
       checkboxInput(
         inputId="isCanceledCheck",
         label="Nie uwzględniaj rezerwacji które zostały wycofane"
@@ -124,9 +130,6 @@ ui <- fluidPage(
 
     # Main panel for displaying outputs ----
     mainPanel(
-      
-      # Output: Histogram ----
-      #plotOutput(outputId = "distPlot")
       plotOutput(outputId = "mapPlot", height = MAP_HEIGHT),
       dataTableOutput(outputId = "tablePlot")
     )
@@ -137,6 +140,15 @@ server <- function(input, output) {
   
   output$mapPlot <- renderPlot({
     df_filtered <- df_booking
+
+    visulizationType <- input$visulizationType
+    observeEvent(visulizationType, {
+      if (visulizationType == "Średni dochód"){
+        updateSliderInput(inputId = "mapMaxValue", min=60, max=150, step=10)
+      } else {
+        updateSliderInput(inputId = "mapMaxValue", min=0, max=10000, step=1000)
+      }
+    })
 
     # filter data based on user input
     if (input$isCanceledCheck){
@@ -156,14 +168,25 @@ server <- function(input, output) {
         filter(arrival_date_month == monthMapping[monthRequested]) -> df_filtered
     }
 
-    breaks_seq <- seq(0, input$mapMaxValue, by=1000)
-    count(df_filtered, country) -> visit_per_country
     legendTitle <- "Liczba wizyt"
+    
+    if(visulizationType == "Średni dochód"){
+      legendTitle <- "Średni dochód"
+      df_filtered %>%
+        group_by(country) %>%
+        summarize(n=mean(adr, na.rm=T)) -> visit_per_country
+      visit_per_country$n[visit_per_country$n < 60] <- 60
+      breaks_seq <- seq(60, input$mapMaxValue, by=10)
+    } else {
+      count(df_filtered, country) -> visit_per_country
+      breaks_seq <- seq(0, input$mapMaxValue, by=1000)
+    }
+
     if (input$percentValues){
       visit_per_country %>%
         mutate(n=100*n/sum(visit_per_country$n)) -> visit_per_country
       breaks_seq <- seq(0, 100, by=20)
-      legendTitle <- "Procent\nwszystkich\nwizyt"
+      legendTitle <- "Procent"
     }
 
     worldMap <- getMap()
@@ -178,13 +201,12 @@ server <- function(input, output) {
     europeCoords <- do.call("rbind", europeCoords)
     joinedEU <- left_join(x=europeCoords, y=visit_per_country, by="country")
     joinedEU$n <- replace_na(joinedEU$n, 0)
-    print(unique(joinedEU$country))
     # Plot the map
     ggplot() + geom_polygon(data = joinedEU, aes(x = long, y = lat, group = region, fill = n),
                             colour = "black", size = 0.1) +
       coord_map(xlim = c(-13, 35),  ylim = c(32, 71)) +
       scale_fill_gradient(name = legendTitle, low = "#FF0000FF", high = "#FFFF00FF", na.value = "#FFFF00FF",
-                          breaks=breaks_seq, limits=c(0, breaks_seq[length(breaks_seq)]), labels=format(breaks_seq)) +
+                          breaks=breaks_seq, limits=c(breaks_seq[1], breaks_seq[length(breaks_seq)]), labels=format(breaks_seq)) +
       theme(
         #panel.grid.minor = element_line(colour = NA),
         axis.text.x = element_blank(),
@@ -197,6 +219,8 @@ server <- function(input, output) {
   }, height = MAP_HEIGHT)
 
   output$tablePlot <- renderDataTable({
+    visulizationType <- input$visulizationType
+
     df_filtered <- df_booking
     df_filtered %>%
       filter(country %in% euCC) -> df_filtered
@@ -219,11 +243,24 @@ server <- function(input, output) {
         filter(arrival_date_month == monthMapping[monthRequested]) -> df_filtered
     }
 
-    breaks_seq <- seq(0, input$mapMaxValue, by=1000)
-    df_filtered %>% count(country) %>% arrange(desc(n)) -> visit_per_country
+    if(visulizationType == "Średni dochód"){
+      df_filtered %>%
+        group_by(country) %>%
+        summarize(n=mean(adr, na.rm=T)) -> df_summarized
+    } else {
+      count(df_filtered, country) -> df_summarized
+    }
+
+    df_summarized %>%
+      arrange(desc(n)) %>%
+      mutate(Kraj=country) %>%
+      mutate("Wartość"=n) %>%
+      mutate(Procent=round(100*n/sum(visit_per_country$n), 2)) %>%
+      select(-n, -country) -> visit_per_country
     visit_per_country
   }, options = list(pageLength=10))
   
 }
 
 shinyApp(ui = ui, server = server)
+
