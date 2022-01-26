@@ -411,6 +411,7 @@ server <- function(input, output) {
           print(table(country_stats$hotel))
           print("Ilość procentowa anulowanych rezerwacji:")
           procent <- table(country_stats$is_canceled)["TRUE"] / table(country_stats$is_canceled)["FALSE"]
+          procent <- round(procent, digits = 2)
           cat(blue(procent, "%\n"))
           print("Ilość dokonanych rezerwacji w danych latach:")
           print(table(country_stats$arrival_date_year))
