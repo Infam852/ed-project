@@ -1,4 +1,5 @@
 library(shiny)
+library(shinythemes)
 library(readr)
 library("rnaturalearth")
 library("rnaturalearthdata")
@@ -6,11 +7,14 @@ library(tidyverse)
 library(rworldmap)
 library(RColorBrewer)
 library(ranger)
+library(crayon)
+library(plotly)
 
 
 MAP_HEIGHT = 720
 
 theme_set(theme_bw())
+shinyOptions(plot.autocolors=TRUE)
 
 # !TODO skip unused cols col_skip()
 colTypes = cols(
@@ -48,20 +52,26 @@ colTypes = cols(
   reservation_status_date=col_date(format="%Y-%m-%d")
 )
 
+worldMap <- getMap()
 fn <- "hotel_bookings.csv"  # source: https://www.kaggle.com/jessemostipak/hotel-booking-demand
 df_booking <- read_csv(fn, col_types = colTypes)
-euCountries <- c("Austria","Belgium","Bulgaria","Croatia","Cyprus",
+euCountries <- c("Albania", "Austria","Belgium","Bulgaria","Belarus","Croatia","Cyprus",
                  "Czech Rep.","Denmark","Estonia","Finland","France",
                  "Germany","Greece","Hungary","Ireland","Italy","Latvia",
                  "Lithuania","Luxembourg","Malta","Netherlands","Poland",
                  "Portugal","Romania","Slovakia","Slovenia","Spain",
                  "Sweden","United Kingdom","Norway","Switzerland","Ukraine",
-                 "Belarus","Serbia","Bosnia and Herz.","Macedonia","Albania",
+                 "Serbia","Bosnia and Herz.","Macedonia",
                  "Montenegro","Moldavia")
-euCC <- c("ALB","AUT","BEL","BGR","BIH","BLR","CHE","CYP","CZE","DEU","DNK",
-          "ESP","EST","FIN","FRA","GBR","GRC","HRV","HUN","IRL","ITA","LTU",
-          "LUX","LVA","MKD","MNE","NLD","NOR","POL","PRT","ROU","SRB","SVK",
-          "SVN","SWE","UKR","MLT")
+euCC <- c("ALB","AUT","BEL","BGR","BLR","HRV","CYP","CZE","DNK","EST",
+          "FIN","FRA","DEU", "GRC", "HUN","IRL","ITA","LVA","LTU","LUX","MAL",
+          "NLD","POL","PRT","ROU","SVK","SVN","ESP","SWE","GBR","NOR","CHF",
+          "UKR","SRB","BIH","MAC", "MTG", "MOL")
+
+countriesMapping <- setNames(as.list(euCC), euCountries)
+
+roomMapping <- c("A", "B", "C", "D", "E", "F", "G", "L", "P")
+
 monthMapping <- c(
   "styczeń"="January",
   "luty"="February",
@@ -80,14 +90,23 @@ smp_size_reduce <- floor(0.2 * nrow(df_booking))
 reduced_idx <- sample(seq_len(nrow(df_booking)), size = smp_size_reduce)
 df_reduced <- df_booking[reduced_idx, ]
 
+
 # Define UI for app that draws a histogram ----
 ui <- fluidPage(
-  titlePanel("Eksploracja danych - wizualizacja danych"),
+  fluidPage(theme = shinytheme("superhero"),
+  tags$head(
+    tags$style(
+    HTML('
+      #sidebar {
+        background-color: transparent;
+      }')
+  )),
+  h1("Eksploracja danych - wizualizacja danych", style = "color: #F5F36C;"),
   tabsetPanel(
     tabPanel(
       "Mapa", 
       sidebarLayout(
-        sidebarPanel(
+        sidebarPanel(id="sidebar",
           selectInput(
             inputId = "visulizationType",
             label = "Wybierz co pokazać",
@@ -106,7 +125,7 @@ ui <- fluidPage(
           
           sliderInput(
             inputId = "mapMaxValue",
-            label = "Dostosuj nacycenie mapy",
+            label = "Dostosuj nasycenie mapy",
             min = 1000,
             max = 10000,
             step = 1000,
@@ -125,17 +144,56 @@ ui <- fluidPage(
             choices = c("cały rok", "styczeń", "luty", "marzec", "kwiecień", "maj",
                         "czerwiec", "lipiec", "sierpień", "wrzesień", "październik",
                         "listopad", "grudzień")
+          ),
+          fluidRow(
+            column(width = 12, verbatimTextOutput("hover_info"))
           )
         ),
         mainPanel(
-          plotOutput(outputId = "mapPlot", height = MAP_HEIGHT),
+          plotOutput(outputId = "mapPlot", height = MAP_HEIGHT, hover = hoverOpts(id ="plot_hover")),
           dataTableOutput(outputId = "tablePlot")
+        )
+      )
+    ),
+    tabPanel("Wykresy", fluid = TRUE,
+      sidebarLayout(
+        sidebarPanel(id="sidebar",
+          fluidRow(
+            column(width = 6),
+            h4("Dane wejściowe do wykresów kołowych:")
+          ),
+          
+          fluidRow(
+            selectInput(
+              inputId = "circleCountry",
+              label = "Kraj",
+              choices = c(euCountries)
+            ),
+            selectInput(
+              inputId = "circelMonth",
+              label = "Miesiąc",
+              choices = c("wszystkie", monthMapping)
+            ),
+            selectInput(
+              inputId = "circelYear",
+              label = "Rok",
+              choices = c("wszystkie", "2015", "2016", "2017")
+            )
+          )
+        ),
+        mainPanel(
+          p(),
+          plotlyOutput(outputId = "plotCirclesCountry"),
+          p(),
+          plotlyOutput(outputId = "plotCirclesYear"),
+          p(),
+          plotlyOutput(outputId = "plotCirclesMonth")
         )
       )
     ),
     tabPanel("Lasy losowe", fluid = TRUE,
        sidebarLayout(
-         sidebarPanel(
+         sidebarPanel(id="sidebar",
            checkboxInput(
              inputId="random_seed",
              label="Losowe ziarno",
@@ -240,11 +298,13 @@ ui <- fluidPage(
            dataTableOutput(outputId = "rfResults")
          )
        )
+      )
     )
   )
 )
 
 server <- function(input, output) {
+  thematic::thematic_shiny(font = "auto")
   
   output$mapPlot <- renderPlot({
     df_filtered <- df_booking
@@ -321,11 +381,50 @@ server <- function(input, output) {
         axis.text.x = element_blank(),
         axis.text.y = element_blank(), axis.ticks.x = element_blank(),
         axis.ticks.y = element_blank(), axis.title = element_blank(),
+        panel.border = element_blank(),
         #rect = element_blank(),
         plot.margin = unit(0 * c(-1.5, -1.5, -1.5, -1.5), "lines"),
         legend.key.size = unit(1, 'cm'),
         text = element_text(size=20))
   }, height = MAP_HEIGHT)
+  
+  output$hover_info <- renderPrint({
+    if(!is.null(input$plot_hover)){
+      hover=input$plot_hover
+      hlat_min <- hover$y - 0.05
+      hlong_min <- hover$x - 0.5
+      hlong_max <- hover$x + 0.5
+      hcountry <- worldMap[worldMap$LON < hlong_max &
+                             worldMap$LON > hlong_min &
+                             worldMap$LAT > hlat_min
+                           ,]
+      foundCountry <- toString(hcountry$NAME[1])
+      if(foundCountry != "NA"){
+        print(foundCountry)
+        # Wypisanie statystyk
+        acronym <- countriesMapping[foundCountry]
+        if(acronym != 'NULL'){
+          country_stats <- df_booking[df_booking$country == acronym, ]
+          print("Ilość wszystkich rezerwacji:")
+          cat(blue(nrow(country_stats),"\n"))
+          print("Ilość wybranego rodzaju pobytu:")
+          print(table(country_stats$hotel))
+          print("Ilość procentowa anulowanych rezerwacji:")
+          procent <- table(country_stats$is_canceled)["TRUE"] / table(country_stats$is_canceled)["FALSE"]
+          cat(blue(procent, "%\n"))
+          print("Ilość dokonanych rezerwacji w danych latach:")
+          print(table(country_stats$arrival_date_year))
+          print("Ilość dokonanych rezerwacji w danych miesiącach:")
+          print(table(country_stats$arrival_date_month)[monthMapping])
+          print("Ilość wybranych typów zakwaterowania:")
+          print(table(country_stats$reserved_room_type)[roomMapping])
+        }
+      }
+      else{
+        print("Nie wykryłem kraju :/")
+      }
+    }
+  })
 
   output$tablePlot <- renderDataTable({
     visulizationType <- input$visulizationType
@@ -492,8 +591,123 @@ server <- function(input, output) {
       }, height = MAP_HEIGHT)
     }
   )
-  # second tab
-  
+  output$plotCirclesCountry <- renderPlotly({
+    font_layout <- list(
+      family = "Open Sans",
+      size = 12,
+      color = 'white')
+    
+    if(!input$circleCountry == "wybierz"){
+      acronym <- countriesMapping[input$circleCountry]
+      country_data <- df_booking[df_booking$country == acronym, ]
+      country_data <- country_data[country_data["is_canceled"] == "FALSE", ]
+      pie_data <- table(country_data$arrival_date_month)[monthMapping]
+      pie_data <- data.frame("months"=rownames(pie_data), pie_data)
+      data <- pie_data[,c('months', 'Freq')]
+      # print(data)
+      fig <- plot_ly(data, labels = ~months, values = ~Freq, 
+                     textposition = 'inside', textinfo = 'label+percent')
+      fig <- fig %>% add_pie(hole = 0.6)
+      fig <- fig %>% layout(title = paste('Ilość wszystkich zrealizowanych rezerwacji w danych miesiącach dla', input$circleCountry),
+                            xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                            yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                            autosize = F, width = 1000, height = 400, paper_bgcolor='transparent', 
+                            font=font_layout)
+      print(fig)
+    }
+  })
+  output$plotCirclesYear <- renderPlotly({
+    font_layout <- list(
+      family = "Open Sans",
+      size = 12,
+      color = 'white')
+    if((input$circelMonth == "wszystkie") && (input$circelYear == "wszystkie")){
+      # acronym <- countriesMapping[input$circleCountry]
+      country_data <- df_booking
+      country_data <- country_data[country_data["is_canceled"] == "FALSE", ]
+      pie_data <- table(country_data$country)
+      pie_data <- data.frame("countries"=rownames(pie_data), pie_data)
+      data <- pie_data[,c('countries', 'Freq')]
+      # print(data)
+      fig1 <- plot_ly(data, labels = ~countries, values = ~Freq, 
+                      textposition = 'inside', textinfo = 'label+percent')
+      fig1 <- fig1 %>% add_pie(hole = 0.6)
+      fig1 <- fig1 %>% layout(title = paste('Ilość rezerwacji w danych krajach w wybranym okresie'),
+                            xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                            yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                            autosize = F, width = 1000, height = 400, paper_bgcolor='transparent', 
+                            font=font_layout)
+      print(fig1)
+    }
+    else if((input$circelMonth == "wszystkie") && (!input$circelYear == "wszystkie")){
+      country_data <- df_booking
+      country_data <- country_data[country_data["is_canceled"] == "FALSE", ]
+      country_data <- country_data[country_data["arrival_date_year"] == input$circelYear, ]
+      pie_data <- table(country_data$country)
+      pie_data <- data.frame("countries"=rownames(pie_data), pie_data)
+      data <- pie_data[,c('countries', 'Freq')]
+      # print(data)
+      fig1 <- plot_ly(data, labels = ~countries, values = ~Freq, 
+                      textposition = 'inside', textinfo = 'label+percent')
+      fig1 <- fig1 %>% add_pie(hole = 0.6)
+      fig1 <- fig1 %>% layout(title = paste('Ilość rezerwacji w danych krajach w okresie', input$circelMonth, input$circelYear),
+                              xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                              yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                              autosize = F, width = 1000, height = 400, paper_bgcolor='transparent', 
+                              font=font_layout)
+      print(fig1)
+    }
+    else if((!input$circelMonth == "wszystkie") && (input$circelYear == "wszystkie")){
+      country_data <- df_booking
+      country_data <- country_data[country_data["is_canceled"] == "FALSE", ]
+      country_data <- country_data[country_data["arrival_date_month"] == input$circelMonth, ]
+      pie_data <- table(country_data$country)
+      pie_data <- data.frame("countries"=rownames(pie_data), pie_data)
+      data <- pie_data[,c('countries', 'Freq')]
+      # print(data)
+      fig1 <- plot_ly(data, labels = ~countries, values = ~Freq, 
+                      textposition = 'inside', textinfo = 'label+percent')
+      fig1 <- fig1 %>% add_pie(hole = 0.6)
+      fig1 <- fig1 %>% layout(title = paste('Ilość rezerwacji w danych krajach w okresie', input$circelMonth),
+                              xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                              yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                              autosize = F, width = 1000, height = 400, paper_bgcolor='transparent', 
+                              font=font_layout)
+      print(fig1)
+    }
+    else if((!input$circelMonth == "wszystkie") && (!input$circelYear == "wszystkie")){
+      country_data <- df_booking
+      country_data <- country_data[country_data["is_canceled"] == "FALSE", ]
+      country_data <- country_data[country_data["arrival_date_year"] == input$circelYear, ]
+      country_data <- country_data[country_data["arrival_date_month"] == input$circelMonth, ]
+      pie_data <- table(country_data$country)
+      pie_data <- data.frame("countries"=rownames(pie_data), pie_data)
+      data <- pie_data[,c('countries', 'Freq')]
+      #print(data)
+      if(sum(data$Freq) != 0 ){
+        fig1 <- plot_ly(data, labels = ~countries, values = ~Freq, 
+                        textposition = 'inside', textinfo = 'label+percent')
+        fig1 <- fig1 %>% add_pie(hole = 0.6)
+        fig1 <- fig1 %>% layout(title = paste('Ilość rezerwacji w danych krajach w okresie', input$circelMonth, input$circelYear),
+                                xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                                yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                                autosize = F, width = 1000, height = 400, paper_bgcolor='transparent', 
+                                font=font_layout)
+        print(fig1)
+      }
+      else{
+        fig1 <- plot_ly(data, labels = ~countries, values = ~Freq, 
+                        textposition = 'inside', textinfo = 'label+percent')
+        fig1 <- fig1 %>% add_pie(hole = 0.6)
+        fig1 <- fig1 %>% layout(title = paste('Brak danych dla', input$circelMonth, input$circelYear),
+                                xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                                yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+                                autosize = F, width = 1000, height = 400, paper_bgcolor='transparent', 
+                                font=font_layout)
+        print(fig1)
+      }
+    }
+  })
 }
 
 shinyApp(ui = ui, server = server)
